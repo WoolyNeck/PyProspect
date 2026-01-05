@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inventory Viewer</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Dark Theme Overrides */
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }
+
+        .container {
+            background: #0f1419;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+        }
+
+        header {
+            background: linear-gradient(135deg, #0f3460 0%, #16213e 100%);
+        }
+
+        .content {
+            background: #0f1419;
+        }
+
+        .loading {
+            color: #4a9eff;
+        }
+
+        .search-box {
+            background: #1a1f2e;
+        }
+
+        .search-box input {
+            background: #0f1419;
+            border: 2px solid #2a2f3e;
+            color: #e0e0e0;
+        }
+
+        .search-box input:focus {
+            border-color: #4a9eff;
+        }
+
+        .search-box input::placeholder {
+            color: #6a6f7e;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #0f3460 0%, #16213e 100%);
+        }
+
+        .sort-controls {
+            background: #1a1f2e;
+        }
+
+        .sort-controls label {
+            color: #e0e0e0;
+        }
+
+        .sort-controls select {
+            background: #0f1419;
+            border: 2px solid #2a2f3e;
+            color: #e0e0e0;
+        }
+
+        .sort-controls select:hover,
+        .sort-controls select:focus {
+            border-color: #4a9eff;
+        }
+
+        .item-name {
+            color: #e0e0e0;
+        }
+
+        .item-amount {
+            color: #e0e0e0;
+        }
+
+        .no-results {
+            color: #6a6f7e;
+        }
+
+        /* In-game stash style card layout */
+        .item-card {
+            width: 120px;
+            height: 120px;
+            background: #000000;
+            position: relative;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .item-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 10px;
+            z-index: 1;
+        }
+
+        .item-card.rarity-Common::before {
+            background-color: #808080;
+        }
+
+        .item-card.rarity-Uncommon::before {
+            background-color: #89F859;
+        }
+
+        .item-card.rarity-Rare::before {
+            background-color: #00C6F7;
+        }
+
+        .item-card.rarity-Epic::before {
+            background-color: #8840B6;
+        }
+
+        .item-card.rarity-Exotic::before {
+            background-color: #EE3355;
+        }
+
+        .item-card.rarity-Legendary::before {
+            background-color: #FF9F42;
+        }
+
+        .item-image-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000000;
+            padding-left: 10px;
+        }
+
+        .item-image {
+            width: 80px;
+            height: 80px;
+            object-fit: contain;
+        }
+
+        .stack-count {
+            position: absolute;
+            bottom: 4px;
+            left: 16px;
+            color: white;
+            font-size: 13px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        }
+
+        .item-amount {
+            position: absolute;
+            top: 4px;
+            right: 6px;
+            color: #d0d0d0;
+            font-size: 14px;
+            font-weight: bold;
+            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.9);
+            z-index: 2;
+        }
+
+        .weight-icon {
+            width: 14px;
+            height: 14px;
+            filter: brightness(0.8);
+        }
+
+        .item-info {
+            display: none;
+        }
+
+        .increment-btn {
+            position: absolute;
+            bottom: 28px;
+            left: 14px;
+            background: rgba(74, 158, 255, 0.9);
+            z-index: 10;
+        }
+
+        .increment-btn:hover {
+            background: rgba(74, 158, 255, 1);
+        }
+
+        .tooltip-title {
+            color: #4a9eff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><img src="images/start_protected_game.png" alt="Inventory" style="height: 1em; vertical-align: middle;"> The Cycle: Frontier - Inventory Viewer</h1>
+            <p class="subtitle">Browse, search and modify your local game inventory</p>
+        </header>
+        <div class="content" id="app"></div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000/api/inventory';
+
+        class InventoryApp {
+            constructor() {
+                this.items = [];
+                this.filteredItems = [];
+                this.searchQuery = '';
+                this.sortBy = 'name';
+                this.loading = true;
+                this.error = null;
+                this.appElement = document.getElementById('app');
+                this.tooltip = null;
+                this.imageCache = new Map(); // Cache for preloaded images
+                this.searchDebounceTimer = null; // Debounce timer for search
+                this.rarityOrder = {
+                    'Common': 0,
+                    'Uncommon': 1,
+                    'Rare': 2,
+                    'Epic': 3,
+                    'Exotic': 4,
+                    'Legendary': 5
+                };
+
+                this.init();
+            }
+
+            async init() {
+                await this.fetchInventory();
+                await this.preloadImages();
+                this.render();
+            }
+
+            async preloadImages() {
+                // Get unique image paths
+                const uniqueImagePaths = [...new Set(this.items.map(item => item.imagePath))];
+
+                // Show loading message
+                this.loading = true;
+                this.appElement.innerHTML = '<div class="loading">⏳ Loading images...</div>';
+
+                // Preload all images
+                const imagePromises = uniqueImagePaths.map(imagePath => {
+                    return new Promise((resolve) => {
+                        if (this.imageCache.has(imagePath)) {
+                            resolve();
+                            return;
+                        }
+
+                        const img = new Image();
+                        img.onload = () => {
+                            this.imageCache.set(imagePath, img.src);
+                            resolve();
+                        };
+                        img.onerror = () => {
+                            // If image fails to load, cache the default path
+                            this.imageCache.set(imagePath, 'images/default.avif');
+                            resolve();
+                        };
+                        img.src = imagePath;
+                    });
+                });
+
+                await Promise.all(imagePromises);
+                this.loading = false;
+            }
+
+            async fetchInventory() {
+                try {
+                    this.loading = true;
+                    this.render();
+
+                    const response = await fetch(API_URL);
+                    if (!response.ok) throw new Error('Failed to fetch inventory');
+
+                    this.items = await response.json();
+                    this.filteredItems = this.items;
+                    this.loading = false;
+                    this.error = null;
+                } catch (err) {
+                    this.error = err.message;
+                    this.loading = false;
+                }
+
+                this.render();
+            }
+
+            handleSearchInput(query) {
+                // Store the query immediately for display
+                this.searchQuery = query;
+
+                // Clear existing timer
+                if (this.searchDebounceTimer) {
+                    clearTimeout(this.searchDebounceTimer);
+                }
+
+                // Set new timer to execute search after 300ms of no typing
+                this.searchDebounceTimer = setTimeout(() => {
+                    this.performSearch(query);
+                }, 300);
+            }
+
+            performSearch(query) {
+                const searchTerm = query.toLowerCase();
+                this.filteredItems = this.items.filter(item =>
+                    item.inGameName?.toLowerCase().includes(searchTerm) ||
+                    item.baseItemId?.toLowerCase().includes(searchTerm) ||
+                    JSON.stringify(item.rolledPerks || []).toLowerCase().includes(searchTerm)
+                );
+                this.applySorting();
+                this.render(true); // Pass true to indicate we should restore focus
+            }
+
+            handleSortChange(sortBy) {
+                this.sortBy = sortBy;
+                this.applySorting();
+                this.render();
+            }
+
+            applySorting() {
+                if (this.sortBy === 'rarity') {
+                    this.filteredItems.sort((a, b) => {
+                        const rarityA = this.rarityOrder[a.rarity] || 0;
+                        const rarityB = this.rarityOrder[b.rarity] || 0;
+                        if (rarityB !== rarityA) {
+                            return rarityB - rarityA; // Descending order (Legendary first)
+                        }
+                        return (a.inGameName || '').localeCompare(b.inGameName || '');
+                    });
+                } else {
+                    // Sort by name
+                    this.filteredItems.sort((a, b) =>
+                        (a.inGameName || '').localeCompare(b.inGameName || '')
+                    );
+                }
+            }
+
+            showTooltip(event, itemName, description) {
+                this.hideTooltip();
+
+                this.tooltip = document.createElement('div');
+                this.tooltip.className = 'tooltip';
+                this.tooltip.innerHTML = `
+                    <div class="tooltip-title">${itemName}</div>
+                    <div>${description}</div>
+                `;
+
+                document.body.appendChild(this.tooltip);
+
+                const updatePosition = (e) => {
+                    if (!this.tooltip) return;
+                    const x = e.clientX;
+                    const y = e.clientY;
+                    const tooltipRect = this.tooltip.getBoundingClientRect();
+
+                    let left = x + 15;
+                    let top = y + 15;
+
+                    // Prevent tooltip from going off screen
+                    if (left + tooltipRect.width > window.innerWidth) {
+                        left = x - tooltipRect.width - 15;
+                    }
+                    if (top + tooltipRect.height > window.innerHeight) {
+                        top = y - tooltipRect.height - 15;
+                    }
+
+                    this.tooltip.style.left = left + 'px';
+                    this.tooltip.style.top = top + 'px';
+                };
+
+                updatePosition(event);
+
+                // Store the event listener so we can track mouse movement
+                this.tooltipMoveHandler = updatePosition;
+                document.addEventListener('mousemove', this.tooltipMoveHandler);
+            }
+
+            hideTooltip() {
+                if (this.tooltip) {
+                    this.tooltip.remove();
+                    this.tooltip = null;
+                }
+                if (this.tooltipMoveHandler) {
+                    document.removeEventListener('mousemove', this.tooltipMoveHandler);
+                    this.tooltipMoveHandler = null;
+                }
+            }
+
+            getTotalAmount() {
+                return this.filteredItems.reduce((sum, item) => sum + (item.amount || 0), 0);
+            }
+
+            async incrementItemAmount(itemId, button) {
+                try {
+                    // Disable button during request
+                    button.disabled = true;
+
+                    // Find current item to get current amount
+                    const item = this.items.find(i => i.itemId === itemId);
+                    if (!item) {
+                        console.error('Item not found');
+                        return;
+                    }
+
+                    const newAmount = (item.amount || 0) + 1;
+
+                    // Call API to update amount
+                    const response = await fetch('http://localhost:5000/api/inventory/update-amount', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ itemId, amount: newAmount })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.error || 'Failed to update amount');
+                    }
+
+                    const result = await response.json();
+
+                    // Update local data
+                    item.amount = result.newAmount;
+
+                    // Update filtered items if the item is in there
+                    const filteredItem = this.filteredItems.find(i => i.itemId === itemId);
+                    if (filteredItem) {
+                        filteredItem.amount = result.newAmount;
+                    }
+
+                    // Re-render to show updated amount
+                    this.render();
+
+                } catch (error) {
+                    console.error('Error updating item amount:', error);
+                    alert('Failed to update item amount: ' + error.message);
+                } finally {
+                    // Re-enable button
+                    button.disabled = false;
+                }
+            }
+
+            render(restoreFocus = false) {
+                if (this.loading) {
+                    this.appElement.innerHTML = '<div class="loading">⏳ Loading inventory...</div>';
+                    return;
+                }
+
+                if (this.error) {
+                    this.appElement.innerHTML = `
+                        <div class="error">
+                            ❌ Error: ${this.error}<br>
+                            <small>Make sure the API server is running on port 5000</small>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Save cursor position if restoring focus
+                const activeElement = document.activeElement;
+                const wasSearchFocused = activeElement && activeElement.id === 'search-input';
+                const cursorPosition = wasSearchFocused ? activeElement.selectionStart : null;
+
+                this.appElement.innerHTML = `
+                    <div class="sort-controls">
+                        <label for="sort-select">Sort by:</label>
+                        <select id="sort-select">
+                            <option value="name" ${this.sortBy === 'name' ? 'selected' : ''}>Item Name</option>
+                            <option value="rarity" ${this.sortBy === 'rarity' ? 'selected' : ''}>Rarity</option>
+                        </select>
+                    </div>
+
+                    <div class="search-box">
+                        <input
+                            type="text"
+                            id="search-input"
+                            placeholder="🔍 Search by Item Name or Perks..."
+                            value="${this.searchQuery}"
+                        />
+                    </div>
+
+                    <div class="stats">
+                        <div class="stat-card">
+                            <div class="stat-value">${this.filteredItems.length}</div>
+                            <div class="stat-label">Items</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${this.getTotalAmount()}</div>
+                            <div class="stat-label">Total Amount</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${this.items.length}</div>
+                            <div class="stat-label">Total in Inventory</div>
+                        </div>
+                    </div>
+
+                    <div class="items-grid">
+                        ${this.filteredItems.length > 0 ?
+                            this.filteredItems.map((item, index) => {
+                                const cachedImagePath = this.imageCache.get(item.imagePath) || item.imagePath || 'images/default.avif';
+                                return `
+                                    <div class="item-card rarity-${item.rarity || 'Common'}" data-item-index="${index}">
+                                        <div class="item-amount">${item.amount || 0} <br />
+                                        </div>
+                                        <div>                                            ${(item.amount || 0) < 10 ? `<button class="increment-btn" data-item-id="${item.itemId}" title="Add 1">+</button>` : ''}</div>
+                                        <div class="item-image-container">
+                                            <img
+                                                src="${cachedImagePath}"
+                                                alt="${item.inGameName || 'Item'}"
+                                                class="item-image"
+                                            />
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')
+                        : '<div class="no-results">No items found matching your search</div>'}
+                    </div>
+                `;
+
+                // Attach event listener to sort select
+                const sortSelect = document.getElementById('sort-select');
+                if (sortSelect) {
+                    sortSelect.addEventListener('change', (e) => this.handleSortChange(e.target.value));
+                }
+
+                // Attach event listener to search input
+                const searchInput = document.getElementById('search-input');
+                if (searchInput) {
+                    searchInput.addEventListener('input', (e) => this.handleSearchInput(e.target.value));
+
+                    // Restore focus and cursor position if needed
+                    if (restoreFocus && wasSearchFocused) {
+                        searchInput.focus();
+                        if (cursorPosition !== null) {
+                            searchInput.setSelectionRange(cursorPosition, cursorPosition);
+                        }
+                    }
+                }
+
+                // Attach tooltip event listeners to item cards
+                const itemCards = document.querySelectorAll('.item-card');
+                itemCards.forEach(card => {
+                    card.addEventListener('mouseenter', (e) => {
+                        const index = parseInt(card.getAttribute('data-item-index'));
+                        const item = this.filteredItems[index];
+                        this.showTooltip(e, item.inGameName || item.baseItemId || 'Unknown Item', item.description || 'No description available');
+                    });
+                    card.addEventListener('mouseleave', () => this.hideTooltip());
+                });
+
+                // Attach event listeners to increment buttons
+                const incrementButtons = document.querySelectorAll('.increment-btn');
+                incrementButtons.forEach(button => {
+                    button.addEventListener('click', (e) => {
+                        e.stopPropagation(); // Prevent any parent click handlers
+                        const itemId = button.getAttribute('data-item-id');
+                        this.incrementItemAmount(itemId, button);
+                    });
+                });
+            }
+        }
+
+        // Initialize the app
+        new InventoryApp();
+    </script>
+</body>
+</html>

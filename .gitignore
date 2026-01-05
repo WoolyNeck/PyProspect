@@ -1,0 +1,7 @@
+#ignore virtual env
+venv
+.venv
+
+#ignore sample image & files
+example_stash.png
+rarities.html
